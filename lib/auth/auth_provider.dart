@@ -98,6 +98,8 @@ class AuthProvider extends ChangeNotifier {
           'username': username.trim(),
           'usernameLower': usernameLower,
           'photoUrl': null,
+          'setupComplete': false,
+          'itemsCount': 0,
           'createdAt': FieldValue.serverTimestamp(),
         });
       });
