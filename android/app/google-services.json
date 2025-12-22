@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "316184107402",
+    "project_id": "ways-app-f4602",
+    "storage_bucket": "ways-app-f4602.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:316184107402:android:cb3ba65bf92ec6ca829073",
+        "android_client_info": {
+          "package_name": "com.example.ways_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfppeBo-OPugJN-VFily5fKkDFPc0ep2o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
