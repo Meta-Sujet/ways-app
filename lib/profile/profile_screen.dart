@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../favorites/favorites_screen.dart';
 import '../friends/add_friend_screen.dart';
+import '../friends/friends_list_screen.dart';
 import '../friends/requests_screen.dart';
 import 'folder_items_screen.dart';
 
@@ -21,10 +22,11 @@ class ProfileScreen extends StatelessWidget {
         .collection('items')
         .where('ownerId', isEqualTo: uid)
         .orderBy('createdAt', descending: true);
-
+    
+   
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Profile"),
+        title:  Text("Profile:"),
         actions: [
           IconButton(
             icon: const Icon(Icons.star),
@@ -50,6 +52,15 @@ class ProfileScreen extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const RequestsScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.people),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const FriendsListScreen()),
               );
             },
           ),

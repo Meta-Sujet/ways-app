@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 
+import 'favorites/favorites_items_provider.dart';
+import 'favorites/favorites_provider.dart';
+import 'feed/friends_feed_provider.dart';
 import 'firebase_options.dart';
 import 'auth/auth_gate.dart';
 import 'auth/auth_provider.dart';
@@ -23,6 +26,9 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => UserProfileProvider()),
+        ChangeNotifierProvider(create: (_) => FriendsFeedProvider()),
+        ChangeNotifierProvider(create: (_) => FavoritesProvider()),
+        ChangeNotifierProvider(create: (_) => FavoritesItemsProvider()),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,

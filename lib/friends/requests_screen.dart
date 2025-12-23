@@ -21,12 +21,10 @@ class RequestsScreen extends StatelessWidget {
     final reqRef = db.collection('friend_requests').doc(requestId);
 
     try {
-      // 1) Update request FIRST (თუ permissions არ აქვს, აქვე უნდა ჩავარდეს)
-      await reqRef.update({
-        'status': 'accepted',
-      });
+      // 1) accept request
+      await reqRef.update({'status': 'accepted'});
 
-      // 2) Read both public profiles (allowed)
+      // 2) profiles
       final myProfile = await _getPublicProfile(myUid) ?? {};
       final fromProfile = await _getPublicProfile(fromUid) ?? {};
 
@@ -36,7 +34,7 @@ class RequestsScreen extends StatelessWidget {
       final fromUsername = (fromProfile['username'] ?? '').toString();
       final fromPhotoUrl = fromProfile['photoUrl']?.toString();
 
-      // 3) Create friends on both sides
+      // 3) create friends on both sides
       final myFriendRef =
           db.collection('friends').doc(myUid).collection('list').doc(fromUid);
       final theirFriendRef =
@@ -76,15 +74,13 @@ class RequestsScreen extends StatelessWidget {
 
   Future<void> declineRequest({
     required BuildContext context,
-    required String myUid,
     required String requestId,
   }) async {
-    final db = FirebaseFirestore.instance;
-
     try {
-      await db.collection('friend_requests').doc(requestId).update({
-        'status': 'declined',
-      });
+      await FirebaseFirestore.instance
+          .collection('friend_requests')
+          .doc(requestId)
+          .update({'status': 'declined'});
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -167,7 +163,6 @@ class RequestsScreen extends StatelessWidget {
                             onPressed: () async {
                               await declineRequest(
                                 context: context,
-                                myUid: myUid,
                                 requestId: requestId,
                               );
                             },

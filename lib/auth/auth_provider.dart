@@ -1,5 +1,4 @@
 import 'dart:async';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -11,13 +10,12 @@ class AuthProvider extends ChangeNotifier {
   StreamSubscription<User?>? _sub;
 
   User? user;
-  bool isLoading = true; // AuthGate ამას ეყრდნობა
+  bool isLoading = true;
   String? error;
 
   bool get isLoggedIn => user != null;
 
   AuthProvider() {
-    // Initial auth sync
     _sub = _auth.authStateChanges().listen((u) {
       user = u;
       isLoading = false;
@@ -55,7 +53,6 @@ class AuthProvider extends ChangeNotifier {
   Future<void> logout() async {
     error = null;
     await _auth.signOut();
-    // authStateChanges თვითონ განაახლებს user-ს
   }
 
   Future<void> registerWithUsername({
@@ -73,7 +70,6 @@ class AuthProvider extends ChangeNotifier {
         return;
       }
 
-      // 1) Create auth user
       final cred = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
@@ -86,7 +82,6 @@ class AuthProvider extends ChangeNotifier {
         return;
       }
 
-      // 2) Reserve username + create public profile atomically
       await _db.runTransaction((tx) async {
         final unameRef = _db.collection('usernames').doc(usernameLower);
         final unameSnap = await tx.get(unameRef);
@@ -113,11 +108,11 @@ class AuthProvider extends ChangeNotifier {
           'updatedAt': FieldValue.serverTimestamp(),
         });
 
-        // OPTIONAL: private users/{uid}
         tx.set(_db.collection('users').doc(uid), {
           'email': email,
           'username': usernameLower,
           'photoUrl': null,
+          'setupComplete': false,
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         });
@@ -145,10 +140,8 @@ class AuthProvider extends ChangeNotifier {
     var u = input.trim().toLowerCase();
     u = u.replaceAll(RegExp(r'\s+'), '');
     u = u.replaceAll(RegExp(r'[^a-z0-9._]'), '');
-
     if (u.length < 3) return '';
     if (u.length > 20) u = u.substring(0, 20);
-
     return u;
   }
 

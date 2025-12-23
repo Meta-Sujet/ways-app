@@ -33,8 +33,8 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     try {
       final db = FirebaseFirestore.instance;
 
-      // 1) usernames/{usernameLower} -> uid
-      final usernameDoc = await db.collection('usernames').doc(usernameLower).get();
+      final usernameDoc =
+          await db.collection('usernames').doc(usernameLower).get();
 
       if (!usernameDoc.exists) {
         if (!mounted) return;
@@ -53,7 +53,17 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         return;
       }
 
-      // 2) public_profiles/{uid} -> profile
+      // ✅ don't show yourself
+      final myUid = FirebaseAuth.instance.currentUser?.uid;
+      if (myUid != null && uid == myUid) {
+        if (!mounted) return;
+        setState(() => foundUser = null);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("That's you 🙂")),
+        );
+        return;
+      }
+
       final profileDoc = await db.collection('public_profiles').doc(uid).get();
       final data = profileDoc.data();
 
@@ -99,7 +109,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     try {
       final db = FirebaseFirestore.instance;
 
-      // 0) already friends?
+      // already friends?
       final alreadyFriend = await db
           .collection('friends')
           .doc(myUid)
@@ -115,7 +125,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         return;
       }
 
-      // 1) pending request I sent?
+      // pending request I sent?
       final pendingSent = await db
           .collection('friend_requests')
           .where('senderId', isEqualTo: myUid)
@@ -132,7 +142,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         return;
       }
 
-      // 2) pending request they sent?
+      // pending request they sent?
       final pendingReceived = await db
           .collection('friend_requests')
           .where('senderId', isEqualTo: otherUid)
@@ -149,7 +159,6 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         return;
       }
 
-      // 3) create request
       await db.collection('friend_requests').doc().set({
         'senderId': myUid,
         'receiverId': otherUid,
@@ -196,9 +205,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
               ),
             ),
             const SizedBox(height: 16),
-
             if (_loading) const LinearProgressIndicator(),
-
             if (foundUser != null) ...[
               const SizedBox(height: 16),
               ListTile(
