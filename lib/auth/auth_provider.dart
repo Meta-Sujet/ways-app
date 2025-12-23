@@ -1,24 +1,37 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-
-class UsernameTakenException implements Exception {}
 
 class AuthProvider extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
+  StreamSubscription<User?>? _sub;
+
   User? user;
-  bool isLoading = true;
+  bool isLoading = true; // AuthGate ამას ეყრდნობა
   String? error;
 
+  bool get isLoggedIn => user != null;
+
   AuthProvider() {
-    _auth.authStateChanges().listen((u) {
-      debugPrint("AUTH STATE => ${u?.uid ?? 'SIGNED OUT'}");
+    // Initial auth sync
+    _sub = _auth.authStateChanges().listen((u) {
       user = u;
       isLoading = false;
       notifyListeners();
+    }, onError: (_) {
+      isLoading = false;
+      notifyListeners();
     });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
   }
 
   void clearError() {
@@ -27,20 +40,22 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> login({required String email, required String password}) async {
-    error = null;
-    notifyListeners();
     try {
-      await _auth.signInWithEmailAndPassword(
-        email: email.trim(),
-        password: password,
-      );
+      error = null;
+      await _auth.signInWithEmailAndPassword(email: email, password: password);
     } on FirebaseAuthException catch (e) {
-      error = _humanMessage(e);
+      error = e.message ?? e.code;
       notifyListeners();
-    } catch (_) {
-      error = "Something went wrong.";
+    } catch (e) {
+      error = e.toString();
       notifyListeners();
     }
+  }
+
+  Future<void> logout() async {
+    error = null;
+    await _auth.signOut();
+    // authStateChanges თვითონ განაახლებს user-ს
   }
 
   Future<void> registerWithUsername({
@@ -48,98 +63,99 @@ class AuthProvider extends ChangeNotifier {
     required String password,
     required String username,
   }) async {
-    error = null;
-    notifyListeners();
-
-    final usernameLower = username.trim().toLowerCase();
-
-    // Basic username validation
-    final valid = RegExp(r'^[a-z0-9_]{3,20}$').hasMatch(usernameLower);
-    if (!valid) {
-      error = "Username must be 3–20 chars: a-z, 0-9, underscore.";
-      notifyListeners();
-      return;
-    }
-
     try {
-      // ✅ PRE-CHECK (better UX): if taken, stop BEFORE creating auth user
-      final snap = await _db.collection('usernames').doc(usernameLower).get();
-      if (snap.exists) {
-        error = "Username is taken. Try another.";
+      error = null;
+
+      final usernameLower = _normalizeUsername(username);
+      if (usernameLower.isEmpty) {
+        error = "Invalid username.";
         notifyListeners();
         return;
       }
 
-      // 1) Create Auth user (now very likely to succeed)
+      // 1) Create auth user
       final cred = await _auth.createUserWithEmailAndPassword(
-        email: email.trim(),
+        email: email,
         password: password,
       );
 
-      final uid = cred.user!.uid;
+      final uid = cred.user?.uid;
+      if (uid == null) {
+        error = "Failed to create user.";
+        notifyListeners();
+        return;
+      }
 
-      // 2) Transaction for safety (still needed)
+      // 2) Reserve username + create public profile atomically
       await _db.runTransaction((tx) async {
-        final usernameRef = _db.collection('usernames').doc(usernameLower);
-        final userRef = _db.collection('users').doc(uid);
+        final unameRef = _db.collection('usernames').doc(usernameLower);
+        final unameSnap = await tx.get(unameRef);
 
-        final usernameSnap = await tx.get(usernameRef);
-        if (usernameSnap.exists) {
-          throw UsernameTakenException();
+        if (unameSnap.exists) {
+          throw FirebaseException(
+            plugin: 'cloud_firestore',
+            code: 'username-taken',
+            message: 'Username already taken.',
+          );
         }
 
-        tx.set(usernameRef, {
+        tx.set(unameRef, {
           'uid': uid,
+          'username': usernameLower,
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        tx.set(userRef, {
-          'email': email.trim(),
-          'username': username.trim(),
-          'usernameLower': usernameLower,
+        tx.set(_db.collection('public_profiles').doc(uid), {
+          'uid': uid,
+          'username': usernameLower,
           'photoUrl': null,
-          'setupComplete': false,
-          'itemsCount': 0,
           'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        // OPTIONAL: private users/{uid}
+        tx.set(_db.collection('users').doc(uid), {
+          'email': email,
+          'username': usernameLower,
+          'photoUrl': null,
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
         });
       });
     } on FirebaseAuthException catch (e) {
-      error = _humanMessage(e);
+      error = e.message ?? e.code;
       notifyListeners();
-    } on UsernameTakenException {
-      // If it somehow got taken between pre-check and transaction
-      try {
-        await _auth.currentUser?.delete();
-      } catch (_) {}
-      error = "Username is taken. Try another.";
+    } on FirebaseException catch (e) {
+      if (e.code == 'username-taken') {
+        error = "Username is already taken.";
+        await _tryDeleteCurrentUser();
+      } else {
+        error = e.message ?? e.code;
+        await _tryDeleteCurrentUser();
+      }
       notifyListeners();
-    } catch (e, st) {
-      debugPrint("REGISTER ERROR => $e");
-      debugPrintStack(stackTrace: st);
-
-      // Do NOT delete the auth user for random errors.
-      // Keep it logged in so you can retry or fix rules.
-      error = "Profile creation failed. Try again.";
+    } catch (e) {
+      error = e.toString();
+      await _tryDeleteCurrentUser();
       notifyListeners();
     }
   }
 
-  Future<void> logout() async {
-    await _auth.signOut();
+  String _normalizeUsername(String input) {
+    var u = input.trim().toLowerCase();
+    u = u.replaceAll(RegExp(r'\s+'), '');
+    u = u.replaceAll(RegExp(r'[^a-z0-9._]'), '');
+
+    if (u.length < 3) return '';
+    if (u.length > 20) u = u.substring(0, 20);
+
+    return u;
   }
 
-  String _humanMessage(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'invalid-email':
-        return 'Email is invalid.';
-      case 'email-already-in-use':
-        return 'This email is already in use.';
-      case 'weak-password':
-        return 'Password is too weak (min 6 chars).';
-      case 'too-many-requests':
-        return 'Too many requests. Try later.';
-      default:
-        return e.message ?? 'Auth error.';
-    }
+  Future<void> _tryDeleteCurrentUser() async {
+    try {
+      final u = _auth.currentUser;
+      if (u != null) await u.delete();
+    } catch (_) {}
   }
 }

@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../favorites/favorites_screen.dart';
+import '../friends/add_friend_screen.dart';
+import '../friends/requests_screen.dart';
 import 'folder_items_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -32,7 +34,26 @@ class ProfileScreen extends StatelessWidget {
                 MaterialPageRoute(builder: (_) => const FavoritesScreen()),
               );
             },
-          ),IconButton(
+          ),
+          IconButton(
+            icon: const Icon(Icons.person_add),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AddFriendScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.mail_outline),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const RequestsScreen()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () {
               FirebaseAuth.instance.signOut();

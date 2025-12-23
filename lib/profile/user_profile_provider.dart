@@ -5,43 +5,75 @@ import 'package:flutter/foundation.dart';
 
 class UserProfileProvider extends ChangeNotifier {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
 
-  Map<String, dynamic>? userProfile;
-  bool isProfileLoading = true;
+  Map<String, dynamic>? _profile;
 
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _profileSub;
+  bool isProfileLoading = false;
+  String? error;
 
-  /// Starts listening to the logged-in user's profile in Firestore.
+  Map<String, dynamic>? get profile => _profile;
+
+  // შენი UI ამას ეყრდნობა
+  bool get isSetupComplete {
+    final data = _profile;
+    if (data == null) return false;
+
+    // აქ ჩასვი ის field რაც შენ რეალურად გაქვს users/{uid}-ში
+    // მაგალითი: setupComplete, hasFirstItem, itemsCount...
+    final setupComplete = data['setupComplete'];
+    if (setupComplete is bool) return setupComplete;
+
+    final hasFirstItem = data['hasFirstItem'];
+    if (hasFirstItem is bool) return hasFirstItem;
+
+    // fallback: თუ არ გაქვს ეგ field-ები, default false რომ lock overlay იმუშაოს
+    return false;
+  }
+
   void startListeningToProfile() {
-    _profileSub?.cancel();
-
     final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
 
-    if (uid == null) {
-      userProfile = null;
-      isProfileLoading = false;
-      notifyListeners();
-      return;
-    }
+    stopListening();
 
     isProfileLoading = true;
+    error = null;
     notifyListeners();
 
-    _profileSub = _db.collection('users').doc(uid).snapshots().listen((doc) {
-      userProfile = doc.data();
-      isProfileLoading = false;
-      notifyListeners();
-    });
+    // ✅ აუცილებლად ასე: users -> doc(uid) (არა users/$uid)
+    _sub = _db.collection('users').doc(uid).snapshots().listen(
+      (snap) {
+        _profile = snap.data();
+        isProfileLoading = false;
+        notifyListeners();
+      },
+      onError: (e) {
+        error = e.toString();
+        isProfileLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
-  /// Stop listening (clean up).
+  Future<void> markSetupCompleteTrue() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    await _db.collection('users').doc(uid).set({
+      'setupComplete': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   void stopListening() {
-    _profileSub?.cancel();
-    _profileSub = null;
+    _sub?.cancel();
+    _sub = null;
+    _profile = null;
+    isProfileLoading = false;
+    error = null;
+    notifyListeners();
   }
-
-  /// True when the user has completed the "first item added" setup.
-  bool get isSetupComplete => userProfile?['setupComplete'] == true;
 
   @override
   void dispose() {

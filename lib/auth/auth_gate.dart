@@ -1,4 +1,4 @@
-import 'package:firebase_auth/firebase_auth.dart' as a;
+// import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -44,7 +44,7 @@ class _AuthGateState extends State<AuthGate> {
   Widget build(BuildContext context) {
 
     final auth = context.watch<AuthProvider>();
-    // a.FirebaseAuth.instance.signOut();
+    // FirebaseAuth.instance.signOut();
 
     // ✅ keep profile listener in sync, but not during build
     _syncProfileListener(auth);
