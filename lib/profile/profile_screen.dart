@@ -1,12 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../favorites/favorites_screen.dart';
 import '../friends/add_friend_screen.dart';
 import '../friends/friends_list_screen.dart';
 import '../friends/requests_screen.dart';
+import '../friends/sent_request_screen.dart';
 import 'folder_items_screen.dart';
+import 'user_profile_provider.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -22,41 +25,22 @@ class ProfileScreen extends StatelessWidget {
         .collection('items')
         .where('ownerId', isEqualTo: uid)
         .orderBy('createdAt', descending: true);
-    
-   
+
     return Scaffold(
       appBar: AppBar(
-        title:  Text("Profile:"),
+        title: Consumer<UserProfileProvider>(
+          builder: (context, profileProv, _) {
+            final username = profileProv.profile?['username']?.toString();
+            if (username == null || username.isEmpty)
+              return const Text("Profile");
+            return Text("Profile: $username");
+          },
+        ),
         actions: [
+          // ✅ Quick access (friends list)
           IconButton(
-            icon: const Icon(Icons.star),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const FavoritesScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.person_add),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AddFriendScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.mail_outline),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const RequestsScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.people),
+            tooltip: "Friends",
+            icon: const Icon(Icons.group),
             onPressed: () {
               Navigator.push(
                 context,
@@ -64,11 +48,89 @@ class ProfileScreen extends StatelessWidget {
               );
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () {
-              FirebaseAuth.instance.signOut();
+
+          // ✅ Everything else in one menu
+          PopupMenuButton<_ProfileMenu>(
+            tooltip: "More",
+            onSelected: (v) {
+              switch (v) {
+                case _ProfileMenu.favorites:
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const FavoritesScreen()),
+                  );
+                  break;
+
+                case _ProfileMenu.addFriend:
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AddFriendScreen()),
+                  );
+                  break;
+
+                case _ProfileMenu.requests:
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const RequestsScreen()),
+                  );
+                  break;
+                case _ProfileMenu.sentRequests:
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const SentRequestsScreen(),
+                    ),
+                  );
+                  break;
+
+                case _ProfileMenu.logout:
+                  FirebaseAuth.instance.signOut();
+                  break;
+              }
             },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _ProfileMenu.favorites,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.star),
+                  title: Text("Favorites"),
+                ),
+              ),
+              PopupMenuItem(
+                value: _ProfileMenu.addFriend,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.person_add),
+                  title: Text("Add friend"),
+                ),
+              ),
+              PopupMenuItem(
+                value: _ProfileMenu.requests,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.mail_outline),
+                  title: Text("Requests"),
+                ),
+              ),
+              PopupMenuItem(
+                value: _ProfileMenu.sentRequests,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.outbox),
+                  title: Text("Sent requests"),
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                value: _ProfileMenu.logout,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.logout),
+                  title: Text("Logout"),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -129,6 +191,8 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 }
+
+enum _ProfileMenu { favorites, addFriend, requests, sentRequests, logout }
 
 class _FolderTile extends StatelessWidget {
   final String name;

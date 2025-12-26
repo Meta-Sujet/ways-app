@@ -19,19 +19,27 @@ class FriendsFeedProvider extends ChangeNotifier {
   bool isLoadingMore = false;
   String? error;
 
+  /// merged cache for UI
   final Map<String, QueryDocumentSnapshot<Map<String, dynamic>>> _itemsById = {};
 
-  // friend meta for UI
+  /// friend meta for UI
   final Map<String, Map<String, dynamic>> _friendMetaByUid = {};
   String friendName(String uid) => (_friendMetaByUid[uid]?['username'] ?? '').toString();
   String? friendPhotoUrl(String uid) => _friendMetaByUid[uid]?['photoUrl']?.toString();
 
-  // pagination
+  /// current friends set (for filtering + instant removal on unfriend)
+  Set<String> _friendIdsSet = {};
+
+  /// pagination
   final int pageSize = 30;
   List<List<String>> _chunks = [];
   final Map<int, DocumentSnapshot<Map<String, dynamic>>?> _lastDocByChunk = {};
   bool _hasMore = true;
   bool get hasMore => _hasMore;
+
+  /// Track which ids came from FIRST PAGE live for each chunk.
+  /// This lets us "replace" page1 data instead of merge-only (so removed docs disappear).
+  final Map<int, Set<String>> _page1IdsByChunk = {};
 
   void start() {
     final myUid = FirebaseAuth.instance.currentUser?.uid;
@@ -45,21 +53,42 @@ class FriendsFeedProvider extends ChangeNotifier {
     _hasMore = true;
     notifyListeners();
 
-    // listen friends list
     _friendsSub = _db
         .collection('friends')
         .doc(myUid)
         .collection('list')
         .snapshots()
         .listen((snap) {
-      _friendMetaByUid.clear();
+      // Build new set + meta
+      final newMeta = <String, Map<String, dynamic>>{};
+      final newIds = <String>{};
+
       for (final d in snap.docs) {
-        _friendMetaByUid[d.id] = d.data();
+        newMeta[d.id] = d.data();
+        newIds.add(d.id);
       }
 
-      final friendIds = snap.docs.map((d) => d.id).toList();
-      _buildChunks(friendIds);
-      _startLiveFirstPage();
+      // Update meta
+      _friendMetaByUid
+        ..clear()
+        ..addAll(newMeta);
+
+      // ✅ IMPORTANT: instantly remove posts that no longer belong to friends
+      // (unfriend should remove from feed immediately)
+      final removedFriends = _friendIdsSet.difference(newIds);
+      if (removedFriends.isNotEmpty) {
+        _itemsById.removeWhere((_, doc) {
+          final ownerId = (doc.data()['ownerId'] ?? '').toString();
+          return removedFriends.contains(ownerId);
+        });
+        _emitSorted(); // immediate UI update
+      }
+
+      _friendIdsSet = newIds;
+
+      // Rebuild feed listeners based on new friends list
+      final friendIds = newIds.toList();
+      _rebuild(friendIds);
     }, onError: (e) {
       error = e.toString();
       isLoading = false;
@@ -67,38 +96,49 @@ class FriendsFeedProvider extends ChangeNotifier {
     });
   }
 
-  void _buildChunks(List<String> friendIds) {
-    _itemsById.clear();
-    _lastDocByChunk.clear();
-    _hasMore = true;
-
-    // cancel old live
+  void _rebuild(List<String> friendIds) {
+    // cancel old listeners FIRST to avoid late events re-filling cache
     for (final s in _liveSubs) {
       s.cancel();
     }
     _liveSubs.clear();
 
+    _chunks = [];
+    _lastDocByChunk.clear();
+    _page1IdsByChunk.clear();
+    _hasMore = true;
+
+    // also drop any cached items not belonging to current friends set
+    _itemsById.removeWhere((_, doc) {
+      final ownerId = (doc.data()['ownerId'] ?? '').toString();
+      return !_friendIdsSet.contains(ownerId);
+    });
+
     if (friendIds.isEmpty) {
-      _chunks = [];
       isLoading = false;
       _itemsCtrl.add([]);
       notifyListeners();
       return;
     }
 
-    const chunkSize = 10; // whereIn limit safety
+    // chunk friends to satisfy whereIn limit
+    const chunkSize = 10;
     final chunks = <List<String>>[];
     for (var i = 0; i < friendIds.length; i += chunkSize) {
       final end = (i + chunkSize) > friendIds.length ? friendIds.length : (i + chunkSize);
       chunks.add(friendIds.sublist(i, end));
     }
     _chunks = chunks;
+
+    isLoading = true;
+    notifyListeners();
+
+    _startLiveFirstPage();
   }
 
   void _startLiveFirstPage() {
     if (_chunks.isEmpty) return;
 
-    // first page should be live (snapshots)
     for (var i = 0; i < _chunks.length; i++) {
       final chunk = _chunks[i];
 
@@ -110,16 +150,31 @@ class FriendsFeedProvider extends ChangeNotifier {
           .snapshots()
           .listen((snap) {
         // cache last doc for pagination
-        if (snap.docs.isNotEmpty) {
-          _lastDocByChunk[i] = snap.docs.last;
-        } else {
-          _lastDocByChunk[i] = null;
+        _lastDocByChunk[i] = snap.docs.isNotEmpty ? snap.docs.last : null;
+
+        // ✅ REPLACE page1 docs for this chunk (not merge-only)
+        // remove old page1 docs of this chunk from cache
+        final oldIds = _page1IdsByChunk[i];
+        if (oldIds != null && oldIds.isNotEmpty) {
+          for (final id in oldIds) {
+            _itemsById.remove(id);
+          }
         }
 
-        // merge docs
+        // set new ids
+        final newIds = <String>{};
+
         for (final doc in snap.docs) {
+          final ownerId = (doc.data()['ownerId'] ?? '').toString();
+
+          // Safety: if friend list changed quickly, ignore docs from non-friends
+          if (!_friendIdsSet.contains(ownerId)) continue;
+
           _itemsById[doc.id] = doc;
+          newIds.add(doc.id);
         }
+
+        _page1IdsByChunk[i] = newIds;
 
         _emitSorted();
         isLoading = false;
@@ -149,7 +204,7 @@ class FriendsFeedProvider extends ChangeNotifier {
         final chunk = _chunks[i];
         final last = _lastDocByChunk[i];
 
-        // if we never got a first page, skip
+        // no more for this chunk
         if (last == null) continue;
 
         final q = await _db
@@ -165,10 +220,11 @@ class FriendsFeedProvider extends ChangeNotifier {
           _lastDocByChunk[i] = q.docs.last;
 
           for (final doc in q.docs) {
+            final ownerId = (doc.data()['ownerId'] ?? '').toString();
+            if (!_friendIdsSet.contains(ownerId)) continue; // safety
             _itemsById[doc.id] = doc;
           }
         } else {
-          // no more for this chunk
           _lastDocByChunk[i] = null;
         }
       }
@@ -209,15 +265,17 @@ class FriendsFeedProvider extends ChangeNotifier {
 
     _chunks = [];
     _lastDocByChunk.clear();
+    _page1IdsByChunk.clear();
+
     _itemsById.clear();
     _friendMetaByUid.clear();
+    _friendIdsSet = {};
 
     isLoading = false;
     isLoadingMore = false;
     error = null;
     _hasMore = true;
 
-    // push empty so UI doesn't hang
     _itemsCtrl.add([]);
     notifyListeners();
   }

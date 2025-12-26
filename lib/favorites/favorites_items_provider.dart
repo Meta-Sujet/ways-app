@@ -11,7 +11,6 @@ class FavoritesItemsProvider extends ChangeNotifier {
 
   final StreamController<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _itemsCtrl =
       StreamController.broadcast();
-
   Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> get itemsStream => _itemsCtrl.stream;
 
   bool isLoading = true;
@@ -19,39 +18,60 @@ class FavoritesItemsProvider extends ChangeNotifier {
 
   final Map<String, QueryDocumentSnapshot<Map<String, dynamic>>> _itemsById = {};
 
+  // current favorite IDs (source of truth)
+  Set<String> _favIdsSet = {};
+
+  // keep uid for optional cleanup deletes
+  String? _uid;
+
   void start() {
-  final uid = FirebaseAuth.instance.currentUser?.uid;
-  if (uid == null) return;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
 
-  stop();
-  _itemsCtrl.add([]); // ✅ დაამატე ეს
+    _uid = uid;
 
-  isLoading = true;
-  error = null;
-  notifyListeners();
+    stop(clearUid: false);
+    _itemsCtrl.add([]);
 
-  _favSub = _db
-      .collection('users')
-      .doc(uid)
-      .collection('favorites')
-      .orderBy('createdAt', descending: true)
-      .snapshots()
-      .listen((snap) {
-    final ids = snap.docs.map((d) => d.id).toList();
-    _rebuildItemListeners(ids);
-  }, onError: (e) {
-    error = e.toString();
-    isLoading = false;
+    isLoading = true;
+    error = null;
     notifyListeners();
-  });
-}
+
+    _favSub = _db
+        .collection('users')
+        .doc(uid)
+        .collection('favorites')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snap) {
+      final newIds = snap.docs.map((d) => d.id).toSet();
+
+      // ✅ remove items from cache if they are no longer favorited
+      final removed = _favIdsSet.difference(newIds);
+      if (removed.isNotEmpty) {
+        for (final id in removed) {
+          _itemsById.remove(id);
+        }
+      }
+
+      _favIdsSet = newIds;
+
+      _rebuildItemListeners(_favIdsSet.toList());
+    }, onError: (e) {
+      error = e.toString();
+      isLoading = false;
+      notifyListeners();
+    });
+  }
 
   void _rebuildItemListeners(List<String> itemIds) {
     for (final s in _itemSubs) {
       s.cancel();
     }
     _itemSubs.clear();
-    _itemsById.clear();
+
+    // also ensure cache only contains current favorites
+    _itemsById.removeWhere((id, _) => !_favIdsSet.contains(id));
 
     if (itemIds.isEmpty) {
       isLoading = false;
@@ -60,7 +80,9 @@ class FavoritesItemsProvider extends ChangeNotifier {
       return;
     }
 
-    // Firestore whereIn limit => chunk
+    isLoading = true;
+    notifyListeners();
+
     const chunkSize = 10;
     final chunks = <List<String>>[];
     for (var i = 0; i < itemIds.length; i += chunkSize) {
@@ -68,18 +90,47 @@ class FavoritesItemsProvider extends ChangeNotifier {
       chunks.add(itemIds.sublist(i, end));
     }
 
-    // 2) listen items by id chunks
+    // Listen items by id in chunks
     for (final chunk in chunks) {
       final sub = _db
           .collection('items')
           .where(FieldPath.documentId, whereIn: chunk)
           .snapshots()
-          .listen((snap) {
-        for (final doc in snap.docs) {
-          _itemsById[doc.id] = doc;
+          .listen((snap) async {
+        // ✅ REPLACE docs for this chunk:
+        // first remove chunk ids from cache, then add back what exists
+        for (final id in chunk) {
+          _itemsById.remove(id);
         }
 
-        // keep favorites order (roughly): sort by createdAt desc (fallback)
+        // add existing docs
+        for (final doc in snap.docs) {
+          // only keep if still favorited
+          if (_favIdsSet.contains(doc.id)) {
+            _itemsById[doc.id] = doc;
+          }
+        }
+
+        // ✅ OPTIONAL: cleanup dangling favorites (item deleted)
+        // if an id is favorited but not returned by Firestore, it likely doesn't exist anymore.
+        // We'll delete that favorite record to keep db clean.
+        final returnedIds = snap.docs.map((d) => d.id).toSet();
+        final missing = chunk.where((id) => _favIdsSet.contains(id) && !returnedIds.contains(id)).toList();
+
+        if (missing.isNotEmpty && _uid != null) {
+          final batch = _db.batch();
+          for (final id in missing) {
+            batch.delete(
+              _db.collection('users').doc(_uid).collection('favorites').doc(id),
+            );
+          }
+          try {
+            await batch.commit();
+          } catch (_) {
+            // ignore cleanup failures (non-critical)
+          }
+        }
+
         final merged = _itemsById.values.toList();
         merged.sort((a, b) {
           final aTs = a.data()['createdAt'];
@@ -102,24 +153,26 @@ class FavoritesItemsProvider extends ChangeNotifier {
     }
   }
 
-  void stop() {
-  _favSub?.cancel();
-  _favSub = null;
+  void stop({bool clearUid = true}) {
+    _favSub?.cancel();
+    _favSub = null;
 
-  for (final s in _itemSubs) {
-    s.cancel();
+    for (final s in _itemSubs) {
+      s.cancel();
+    }
+    _itemSubs.clear();
+
+    _itemsById.clear();
+    _favIdsSet = {};
+
+    if (clearUid) _uid = null;
+
+    _itemsCtrl.add([]);
+
+    isLoading = false;
+    error = null;
+    notifyListeners();
   }
-  _itemSubs.clear();
-
-  _itemsById.clear();
-
-  _itemsCtrl.add([]); // ✅ დაამატე ეს
-
-  isLoading = false;
-  error = null;
-  notifyListeners();
-}
-
 
   @override
   void dispose() {

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../friends/firends_profile_screen.dart';
 import 'friends_feed_provider.dart';
 import 'item_detail_screen.dart';
 import '../favorites/favorites_provider.dart';
@@ -28,7 +29,8 @@ class _FeedScreenState extends State<FeedScreen> {
 
     final feed = context.read<FriendsFeedProvider>();
 
-    final nearBottom = _controller.position.pixels >
+    final nearBottom =
+        _controller.position.pixels >
         (_controller.position.maxScrollExtent - 300);
 
     if (nearBottom && !_loadTriggered && feed.hasMore && !feed.isLoadingMore) {
@@ -122,7 +124,8 @@ class _FeedScreenState extends State<FeedScreen> {
               final ownerId = (data['ownerId'] ?? '').toString();
               final username = feed.friendName(ownerId);
 
-              final title = (data['title'] ?? data['name'] ?? 'Item').toString();
+              final title = (data['title'] ?? data['name'] ?? 'Item')
+                  .toString();
               final folder = (data['folder'] ?? 'General').toString();
               final price = data['price'];
               final isGiveaway = (data['isGiveaway'] == true);
@@ -150,24 +153,50 @@ class _FeedScreenState extends State<FeedScreen> {
                         // header (friend)
                         Row(
                           children: [
-                            CircleAvatar(
-                              child: Text(
-                                username.isNotEmpty
-                                    ? username[0].toUpperCase()
-                                    : "?",
+                            InkWell(
+                              borderRadius: BorderRadius.circular(999),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        FriendProfileScreen(friendUid: ownerId),
+                                  ),
+                                );
+                              },
+                              child: CircleAvatar(
+                                child: Text(
+                                  username.isNotEmpty
+                                      ? username[0].toUpperCase()
+                                      : "?",
+                                ),
                               ),
                             ),
+
                             const SizedBox(width: 10),
                             Expanded(
-                              child: Text(
-                                username.isNotEmpty ? username : ownerId,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
+                              child: InkWell(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => FriendProfileScreen(
+                                        friendUid: ownerId,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: Text(
+                                  username.isNotEmpty ? username : ownerId,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
+
                             Text(
                               folder,
                               style: const TextStyle(color: Colors.black54),
@@ -231,9 +260,9 @@ class _FeedScreenState extends State<FeedScreen> {
                             IconButton(
                               tooltip: "Favorite",
                               onPressed: () async {
-                                await context
-                                    .read<FavoritesProvider>()
-                                    .toggle(doc.id);
+                                await context.read<FavoritesProvider>().toggle(
+                                  doc.id,
+                                );
                               },
                               icon: Icon(
                                 favs.isFav(doc.id)

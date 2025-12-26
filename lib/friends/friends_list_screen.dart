@@ -2,37 +2,26 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'firends_profile_screen.dart';
+
 class FriendsListScreen extends StatelessWidget {
   const FriendsListScreen({super.key});
 
-  Future<void> unfriend({
-    required BuildContext context,
-    required String myUid,
-    required String otherUid,
-  }) async {
-    try {
-      final db = FirebaseFirestore.instance;
+  Future<void> _unfriend(BuildContext context, String myUid, String otherUid) async {
+    final db = FirebaseFirestore.instance;
 
-      final a = db.collection('friends').doc(myUid).collection('list').doc(otherUid);
-      final b = db.collection('friends').doc(otherUid).collection('list').doc(myUid);
+    final a = db.collection('friends').doc(myUid).collection('list').doc(otherUid);
+    final b = db.collection('friends').doc(otherUid).collection('list').doc(myUid);
 
-      final batch = db.batch();
-      batch.delete(a);
-      batch.delete(b);
+    final batch = db.batch();
+    batch.delete(a);
+    batch.delete(b);
+    await batch.commit();
 
-      await batch.commit();
-
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Friend removed.")),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Unfriend failed: $e")),
-        );
-      }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Friend removed.")),
+      );
     }
   }
 
@@ -54,17 +43,11 @@ class FriendsListScreen extends StatelessWidget {
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: query.snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text("Error: ${snapshot.error}"));
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+          if (snapshot.hasError) return Center(child: Text("Error: ${snapshot.error}"));
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
 
           final docs = snapshot.data!.docs;
-          if (docs.isEmpty) {
-            return const Center(child: Text("No friends yet."));
-          }
+          if (docs.isEmpty) return const Center(child: Text("No friends yet."));
 
           return ListView.separated(
             padding: const EdgeInsets.all(12),
@@ -74,7 +57,7 @@ class FriendsListScreen extends StatelessWidget {
               final doc = docs[index];
               final data = doc.data();
 
-              final otherUid = doc.id; // docId == friendUid
+              final otherUid = doc.id;
               final username = (data['username'] ?? '').toString();
               final photoUrl = data['photoUrl']?.toString();
 
@@ -82,8 +65,21 @@ class FriendsListScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
                 elevation: 1,
                 child: ListTile(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => FriendProfileScreen(friendUid: otherUid),
+                      ),
+                    );
+                  },
                   leading: CircleAvatar(
-                    child: Text(username.isNotEmpty ? username[0].toUpperCase() : "?"),
+                    backgroundImage: (photoUrl != null && photoUrl.trim().isNotEmpty)
+                        ? NetworkImage(photoUrl)
+                        : null,
+                    child: (photoUrl == null || photoUrl.trim().isEmpty)
+                        ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?")
+                        : null,
                   ),
                   title: Text(username.isEmpty ? "(no username)" : username),
                   subtitle: Text(otherUid),
@@ -95,7 +91,7 @@ class FriendsListScreen extends StatelessWidget {
                         context: context,
                         builder: (_) => AlertDialog(
                           title: const Text("Remove friend?"),
-                          content: Text("Remove $username from your friends?"),
+                          content: Text("Remove ${username.isEmpty ? "this user" : username}?"),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(context, false),
@@ -110,11 +106,7 @@ class FriendsListScreen extends StatelessWidget {
                       );
 
                       if (ok == true) {
-                        await unfriend(
-                          context: context,
-                          myUid: myUid,
-                          otherUid: otherUid,
-                        );
+                        await _unfriend(context, myUid, otherUid);
                       }
                     },
                   ),

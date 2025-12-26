@@ -1,7 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../favorites/favorites_items_provider.dart';
 import '../feed/friends_feed_provider.dart';
 import '../favorites/favorites_provider.dart';
 
@@ -24,7 +23,6 @@ class _AuthGateState extends State<AuthGate> {
 
   String? _lastFavUid;
 
-  String? _lastFavItemsUid;
 
   void _syncProfileListener(AuthProvider auth) {
     final currentUid = auth.user?.uid;
@@ -92,25 +90,7 @@ class _AuthGateState extends State<AuthGate> {
     });
   }
 
-  void _syncFavoritesItemsListener(AuthProvider auth) {
-    final currentUid = auth.user?.uid;
 
-    if (currentUid == null) {
-      if (_lastFavItemsUid != null) {
-        context.read<FavoritesItemsProvider>().stop();
-        _lastFavItemsUid = null;
-      }
-      return;
-    }
-
-    if (_lastFavItemsUid == currentUid) return;
-
-    _lastFavItemsUid = currentUid;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      context.read<FavoritesItemsProvider>().start();
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -121,7 +101,6 @@ class _AuthGateState extends State<AuthGate> {
     _syncProfileListener(auth);
     _syncFriendsFeedListener(auth);
     _syncFavoritesListener(auth);
-    _syncFavoritesItemsListener(auth);
 
     if (auth.isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));

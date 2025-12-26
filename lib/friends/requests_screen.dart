@@ -5,95 +5,67 @@ import 'package:flutter/material.dart';
 class RequestsScreen extends StatelessWidget {
   const RequestsScreen({super.key});
 
-  Future<Map<String, dynamic>?> _getPublicProfile(String uid) async {
-    final db = FirebaseFirestore.instance;
-    final doc = await db.collection('public_profiles').doc(uid).get();
-    return doc.data();
-  }
-
   Future<void> acceptRequest({
-    required BuildContext context,
-    required String myUid,
     required String requestId,
-    required String fromUid,
+    required String myUid,
+    required String senderId,
   }) async {
     final db = FirebaseFirestore.instance;
+
+    // my public snapshot for friend meta on other side
+    final mePublic = await db.collection('public_profiles').doc(myUid).get();
+    final me = mePublic.data() ?? {};
+    final myUsername = (me['username'] ?? '').toString();
+    final myPhotoUrl = me['photoUrl']?.toString();
+
+    // sender public snapshot for my side meta
+    final senderPublic = await db.collection('public_profiles').doc(senderId).get();
+    final s = senderPublic.data() ?? {};
+    final senderUsername = (s['username'] ?? '').toString();
+    final senderPhotoUrl = s['photoUrl']?.toString();
+
+    final batch = db.batch();
+
+    // 1) mark request accepted (receiver does this -> allowed by rules)
     final reqRef = db.collection('friend_requests').doc(requestId);
+    batch.update(reqRef, {
+      'status': 'accepted',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
 
-    try {
-      // 1) accept request
-      await reqRef.update({'status': 'accepted'});
+    // 2) create friends on both sides (this is what your feed uses)
+    final myFriendRef =
+        db.collection('friends').doc(myUid).collection('list').doc(senderId);
+    final theirFriendRef =
+        db.collection('friends').doc(senderId).collection('list').doc(myUid);
 
-      // 2) profiles
-      final myProfile = await _getPublicProfile(myUid) ?? {};
-      final fromProfile = await _getPublicProfile(fromUid) ?? {};
+    batch.set(myFriendRef, {
+      'uid': senderId,
+      'username': senderUsername,
+      'photoUrl': senderPhotoUrl,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
 
-      final myUsername = (myProfile['username'] ?? '').toString();
-      final myPhotoUrl = myProfile['photoUrl']?.toString();
+    batch.set(theirFriendRef, {
+      'uid': myUid,
+      'username': myUsername,
+      'photoUrl': myPhotoUrl,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
 
-      final fromUsername = (fromProfile['username'] ?? '').toString();
-      final fromPhotoUrl = fromProfile['photoUrl']?.toString();
-
-      // 3) create friends on both sides
-      final myFriendRef =
-          db.collection('friends').doc(myUid).collection('list').doc(fromUid);
-      final theirFriendRef =
-          db.collection('friends').doc(fromUid).collection('list').doc(myUid);
-
-      final batch = db.batch();
-
-      batch.set(myFriendRef, {
-        'uid': fromUid,
-        'username': fromUsername,
-        'photoUrl': fromPhotoUrl,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      batch.set(theirFriendRef, {
-        'uid': myUid,
-        'username': myUsername,
-        'photoUrl': myPhotoUrl,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      await batch.commit();
-
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Friend request accepted.")),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Accept failed: $e")),
-        );
-      }
-    }
+    await batch.commit();
   }
 
   Future<void> declineRequest({
-    required BuildContext context,
     required String requestId,
   }) async {
-    try {
-      await FirebaseFirestore.instance
-          .collection('friend_requests')
-          .doc(requestId)
-          .update({'status': 'declined'});
+    final db = FirebaseFirestore.instance;
 
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Friend request declined.")),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Decline failed: $e")),
-        );
-      }
-    }
+    // receiver updates status -> allowed by rules
+    await db.collection('friend_requests').doc(requestId).update({
+      'status': 'declined',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   @override
@@ -103,6 +75,7 @@ class RequestsScreen extends StatelessWidget {
       return const Scaffold(body: Center(child: Text("Not logged in")));
     }
 
+    // ✅ top-level friend_requests for me as receiver
     final query = FirebaseFirestore.instance
         .collection('friend_requests')
         .where('receiverId', isEqualTo: myUid)
@@ -135,25 +108,33 @@ class RequestsScreen extends StatelessWidget {
               final data = doc.data();
 
               final requestId = doc.id;
-              final fromUid = (data['senderId'] ?? '').toString();
+              final senderId = (data['senderId'] ?? '').toString();
 
-              return FutureBuilder<Map<String, dynamic>?>(
-                future: _getPublicProfile(fromUid),
-                builder: (context, profSnap) {
-                  final prof = profSnap.data ?? {};
-                  final fromUsername = (prof['username'] ?? '').toString();
+              return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                future: FirebaseFirestore.instance
+                    .collection('public_profiles')
+                    .doc(senderId)
+                    .get(),
+                builder: (context, snap) {
+                  final p = snap.data?.data() ?? {};
+                  final username = (p['username'] ?? 'Unknown').toString();
+                  final photoUrl = p['photoUrl']?.toString();
 
                   return Material(
                     borderRadius: BorderRadius.circular(14),
                     elevation: 1,
                     child: ListTile(
                       leading: CircleAvatar(
-                        child: Text(fromUsername.isNotEmpty
-                            ? fromUsername[0].toUpperCase()
-                            : "?"),
+                        backgroundImage:
+                            (photoUrl != null && photoUrl.trim().isNotEmpty)
+                                ? NetworkImage(photoUrl)
+                                : null,
+                        child: (photoUrl == null || photoUrl.trim().isEmpty)
+                            ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?")
+                            : null,
                       ),
-                      title: Text(fromUsername.isEmpty ? "(no username)" : fromUsername),
-                      subtitle: Text(fromUid),
+                      title: Text(username),
+                      subtitle: Text(senderId),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -161,10 +142,7 @@ class RequestsScreen extends StatelessWidget {
                             tooltip: "Decline",
                             icon: const Icon(Icons.close),
                             onPressed: () async {
-                              await declineRequest(
-                                context: context,
-                                requestId: requestId,
-                              );
+                              await declineRequest(requestId: requestId);
                             },
                           ),
                           IconButton(
@@ -172,10 +150,9 @@ class RequestsScreen extends StatelessWidget {
                             icon: const Icon(Icons.check),
                             onPressed: () async {
                               await acceptRequest(
-                                context: context,
-                                myUid: myUid,
                                 requestId: requestId,
-                                fromUid: fromUid,
+                                myUid: myUid,
+                                senderId: senderId,
                               );
                             },
                           ),
